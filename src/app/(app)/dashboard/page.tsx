@@ -14,6 +14,9 @@ import {
   Crosshair,
   FileText,
   Scale,
+  Radio,
+  Star,
+  CalendarClock,
 } from "lucide-react";
 import { requireAuth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -43,17 +46,41 @@ const SYSTEMS = [
 
 export default async function DashboardPage() {
   const user = await requireAuth();
+  const onlineSince = new Date(Date.now() - 30 * 60_000); // active within 30 minutes
 
-  const [scpCount, personnelCount, departmentCount, incidentCount, announcements, recentScps, activity] =
-    await Promise.all([
-      prisma.scpObject.count({ where: { deletedAt: null } }),
-      prisma.personnel.count({ where: { deletedAt: null } }),
-      prisma.department.count({ where: { deletedAt: null } }),
-      prisma.incident.count({ where: { deletedAt: null } }),
-      prisma.announcement.findMany({ where: { deletedAt: null }, orderBy: [{ pinned: "desc" }, { createdAt: "desc" }], take: 4 }),
-      prisma.scpObject.findMany({ where: { deletedAt: null }, orderBy: { updatedAt: "desc" }, take: 5 }),
-      prisma.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: 6 }),
-    ]);
+  const [
+    scpCount,
+    personnelCount,
+    departmentCount,
+    incidentCount,
+    announcements,
+    recentScps,
+    activity,
+    onlineCount,
+    upcomingOps,
+    favorites,
+    siteSetting,
+  ] = await Promise.all([
+    prisma.scpObject.count({ where: { deletedAt: null } }),
+    prisma.personnel.count({ where: { deletedAt: null } }),
+    prisma.department.count({ where: { deletedAt: null } }),
+    prisma.incident.count({ where: { deletedAt: null } }),
+    prisma.announcement.findMany({ where: { deletedAt: null }, orderBy: [{ pinned: "desc" }, { createdAt: "desc" }], take: 4 }),
+    prisma.scpObject.findMany({ where: { deletedAt: null }, orderBy: { updatedAt: "desc" }, take: 5 }),
+    prisma.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: 6 }),
+    prisma.user.count({ where: { deletedAt: null, status: "ACTIVE", lastLoginAt: { gte: onlineSince } } }),
+    prisma.operation.findMany({
+      where: { deletedAt: null, scheduledFor: { gte: new Date() } },
+      orderBy: { scheduledFor: "asc" },
+      take: 4,
+    }),
+    prisma.favorite.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 5 }),
+    prisma.setting.findUnique({ where: { key: "site" } }),
+  ]);
+
+  const securityLevel =
+    (siteSetting?.value as { securityLevel?: string } | null)?.securityLevel ?? "GREEN";
+  const securityTone = securityLevel === "RED" ? "alert" : securityLevel === "YELLOW" ? "caution" : "success";
 
   const levelTone = (level: string) =>
     level === "alert" ? "alert" : level === "caution" ? "caution" : "accent";
@@ -76,18 +103,19 @@ export default async function DashboardPage() {
             <RoleBadge role={user.role} />
             <ClearanceBadge clearance={user.clearance} />
             <Badge variant="success">
-              <span className="size-1.5 rounded-full bg-success" /> Status: GREEN
+              <span className="size-1.5 rounded-full bg-success" /> Status: {securityLevel}
             </Badge>
           </div>
         </div>
       </Card>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatCard label="SCP Objects" value={scpCount} icon={FlaskConical} href="/scp" hint="Catalogued anomalies" />
         <StatCard label="Personnel" value={personnelCount} icon={Users} href="/personnel" hint="Registered staff" tone="success" />
         <StatCard label="Departments" value={departmentCount} icon={Building2} href="/departments" hint="Active divisions" />
         <StatCard label="Open Incidents" value={incidentCount} icon={AlertTriangle} href="/incidents" hint="Requiring review" tone="caution" />
+        <StatCard label="Personnel Online" value={onlineCount} icon={Radio} href="/personnel?staff=1" hint="Active in last 30 min" tone="accent" />
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -121,6 +149,39 @@ export default async function DashboardPage() {
                       </p>
                     </div>
                   </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Upcoming operations */}
+          <Card>
+            <CardHeader className="flex-row items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <CalendarClock className="size-4 text-accent" /> Upcoming Operations
+              </CardTitle>
+              <Link href="/operations" className="text-[0.66rem] text-accent hover:underline">
+                View all
+              </Link>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {upcomingOps.length === 0 ? (
+                <p className="text-sm text-muted">No scheduled operations.</p>
+              ) : (
+                upcomingOps.map((op) => (
+                  <Link
+                    key={op.id}
+                    href={`/operations/${op.slug}`}
+                    className="flex items-center justify-between rounded-md border border-hairline/40 bg-panel-2/40 p-3 transition-colors hover:border-accent/40"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-foreground">{op.codename}</p>
+                      <p className="text-xs text-muted">{op.classification} · {op.status}</p>
+                    </div>
+                    <span className="shrink-0 text-xs text-muted">
+                      {op.scheduledFor ? formatDate(op.scheduledFor) : "TBD"}
+                    </span>
+                  </Link>
                 ))
               )}
             </CardContent>
@@ -178,6 +239,57 @@ export default async function DashboardPage() {
                     <span className="text-[0.7rem] text-muted">{q.label}</span>
                   </Link>
                 ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Favorites / pinned */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Star className="size-4 text-accent" /> Favorite Pages
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {favorites.length === 0 ? (
+                <p className="text-sm text-muted">Pin pages from record views to see them here.</p>
+              ) : (
+                favorites.map((f) => (
+                  <Link
+                    key={f.id}
+                    href={f.href}
+                    className="flex items-center justify-between rounded-md border border-hairline/40 bg-panel-2/40 px-3 py-2 text-sm transition-colors hover:border-accent/40"
+                  >
+                    <span className="truncate text-foreground">{f.label}</span>
+                    <ArrowUpRight className="size-3.5 shrink-0 text-muted" />
+                  </Link>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Site security level */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="size-4 text-accent" /> Security Level
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className={`flex items-center gap-3 rounded-md border p-4 ${
+                securityTone === "alert"
+                  ? "border-alert/40 bg-alert/5"
+                  : securityTone === "caution"
+                    ? "border-caution/40 bg-caution/5"
+                    : "border-success/40 bg-success/5"
+              }`}>
+                <span className={`size-3 rounded-full ${
+                  securityTone === "alert" ? "bg-alert animate-pulse-soft" : securityTone === "caution" ? "bg-caution" : "bg-success"
+                }`} />
+                <div>
+                  <p className="font-mono text-lg font-bold text-foreground">{securityLevel}</p>
+                  <p className="text-xs text-muted">Site-wide threat posture</p>
+                </div>
               </div>
             </CardContent>
           </Card>

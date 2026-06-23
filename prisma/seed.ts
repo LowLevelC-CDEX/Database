@@ -164,6 +164,28 @@ async function main() {
     },
   });
 
+  // ── Operations (placeholders) ────────────────────────────────
+  const ops: [string, string, string, string, number][] = [
+    ["op-nightwatch", "OPERATION NIGHTWATCH", "Routine", "Planned", 3],
+    ["op-sweep", "OPERATION SWEEP", "Classified", "Approved", 7],
+  ];
+  for (const [slug, codename, classification, status, daysAhead] of ops) {
+    await prisma.operation.upsert({
+      where: { slug },
+      update: {},
+      create: {
+        slug,
+        codename,
+        classification,
+        status,
+        scheduledFor: new Date(Date.now() + Number(daysAhead) * 86_400_000),
+        objective: "[PLACEHOLDER] Operation objective. Replace with your own mission details.",
+        body: "[PLACEHOLDER] Full operation briefing.",
+        contentStatus: ContentStatus.PUBLISHED,
+      },
+    });
+  }
+
   // ── Content pages (rules + docs + training) ────────────────
   const rules = [
     ["general-rules", "General Rules"],
