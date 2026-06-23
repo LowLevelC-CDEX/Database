@@ -16,15 +16,17 @@ export const metadata = { title: "Personnel Database" };
 export default async function PersonnelPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; staff?: string }>;
 }) {
-  const { q } = await searchParams;
+  const { q, staff } = await searchParams;
+  const staffOnly = staff === "1";
   const user = await getCurrentUser();
   const manage = can(user?.role, "personnel.manage");
 
   const people = await prisma.personnel.findMany({
     where: {
       deletedAt: null,
+      ...(staffOnly ? { userId: { not: null } } : {}),
       ...(q ? { OR: [{ name: { contains: q, mode: "insensitive" } }, { position: { contains: q, mode: "insensitive" } }, { rank: { contains: q, mode: "insensitive" } }] } : {}),
     },
     include: { department: { select: { name: true } } },
@@ -35,15 +37,36 @@ export default async function PersonnelPage({
     <div className="space-y-6">
       <PageHeader
         eyebrow="Foundation Staff Registry"
-        title="Personnel Database"
-        description="Profiles for all registered Site-80 personnel."
+        title={staffOnly ? "Staff Directory" : "Personnel Database"}
+        description={
+          staffOnly
+            ? "Personnel with active system accounts at Site-80."
+            : "Profiles for all registered Site-80 personnel."
+        }
         actions={manage ? <Link href="/admin/personnel/new" className={buttonVariants({})}><Plus className="size-4" /> Add Personnel</Link> : undefined}
       />
 
-      <form className="relative max-w-md" action="/personnel">
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
-        <Input name="q" defaultValue={q} placeholder="Search by name, rank, position…" className="pl-9" />
-      </form>
+      <div className="flex flex-wrap items-center gap-3">
+        <form className="relative min-w-[200px] flex-1 max-w-md" action="/personnel">
+          {staffOnly && <input type="hidden" name="staff" value="1" />}
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+          <Input name="q" defaultValue={q} placeholder="Search by name, rank, position…" className="pl-9" />
+        </form>
+        <div className="flex gap-1.5">
+          <Link
+            href="/personnel"
+            className={`rounded-md border px-3 py-2 text-xs ${!staffOnly ? "border-accent/50 bg-accent/10 text-accent" : "border-hairline/60 text-muted hover:text-foreground"}`}
+          >
+            All Personnel
+          </Link>
+          <Link
+            href="/personnel?staff=1"
+            className={`rounded-md border px-3 py-2 text-xs ${staffOnly ? "border-accent/50 bg-accent/10 text-accent" : "border-hairline/60 text-muted hover:text-foreground"}`}
+          >
+            Staff Accounts
+          </Link>
+        </div>
+      </div>
 
       {people.length === 0 ? (
         <EmptyState icon={Users} title="No personnel records" description={manage ? "Add personnel to populate the registry." : "No personnel match your query."} />
