@@ -6,9 +6,11 @@ import { audit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
 import type { Role, Clearance } from "@prisma/client";
 
+import { SESSION_COOKIE_NAME, USE_SECURE_COOKIES } from "@/lib/constants";
+
 const MAX_FAILED = 5;
 const LOCK_MINUTES = 15;
-const useSecureCookies = process.env.SECURE_COOKIES === "true";
+const useSecureCookies = USE_SECURE_COOKIES;
 
 export const authOptions: NextAuthOptions = {
   session: {
@@ -24,7 +26,7 @@ export const authOptions: NextAuthOptions = {
   useSecureCookies,
   cookies: {
     sessionToken: {
-      name: `${useSecureCookies ? "__Secure-" : ""}site80.session`,
+      name: SESSION_COOKIE_NAME,
       options: {
         httpOnly: true,
         sameSite: "lax",
