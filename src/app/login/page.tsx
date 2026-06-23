@@ -1,24 +1,8 @@
-"use client";
+import { LoginExperience } from "@/components/auth/login-experience";
 
-import { Suspense, useState, useCallback } from "react";
-import { BootSequence } from "@/components/boot/boot-sequence";
-import { LoginForm } from "@/components/auth/login-form";
-import { LoginBackdrop } from "@/components/auth/login-backdrop";
+// Dynamic so middleware's per-request CSP nonce is injected into scripts.
+export const dynamic = "force-dynamic";
 
 export default function LoginPage() {
-  const [booted, setBooted] = useState(false);
-
-  const handleComplete = useCallback(() => setBooted(true), []);
-
-  return (
-    <main id="main-content" className="relative min-h-screen overflow-hidden bg-ink">
-      <LoginBackdrop />
-      {!booted && <BootSequence onComplete={handleComplete} />}
-      {booted && (
-        <Suspense>
-          <LoginForm />
-        </Suspense>
-      )}
-    </main>
-  );
+  return <LoginExperience />;
 }

@@ -20,11 +20,12 @@ function isPublic(pathname: string) {
   return false;
 }
 
-function securityHeaders(res: NextResponse, nonce: string) {
+function buildCsp(nonce: string) {
   const isDev = process.env.NODE_ENV !== "production";
-  const csp = [
+  return [
     `default-src 'self'`,
-    // Next.js requires inline/eval in dev; tighten in production with the nonce.
+    // Next.js requires inline/eval in dev; in production we trust the nonce
+    // and let 'strict-dynamic' propagate trust to Next's chunk loader.
     `script-src 'self' 'nonce-${nonce}' ${isDev ? "'unsafe-eval' 'unsafe-inline'" : "'strict-dynamic'"}`,
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' data: blob: https:`,
@@ -35,7 +36,9 @@ function securityHeaders(res: NextResponse, nonce: string) {
     `base-uri 'self'`,
     `form-action 'self'`,
   ].join("; ");
+}
 
+function securityHeaders(res: NextResponse, csp: string) {
   res.headers.set("Content-Security-Policy", csp);
   res.headers.set("X-Frame-Options", "DENY");
   res.headers.set("X-Content-Type-Options", "nosniff");
@@ -52,15 +55,16 @@ function securityHeaders(res: NextResponse, nonce: string) {
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const nonce = crypto.randomUUID();
+  const csp = buildCsp(nonce);
 
+  // Next.js extracts the nonce from the CSP set on the *request* headers and
+  // applies it to its own <script> tags, enabling 'strict-dynamic' in prod.
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", csp);
 
   const respond = () =>
-    securityHeaders(
-      NextResponse.next({ request: { headers: requestHeaders } }),
-      nonce,
-    );
+    securityHeaders(NextResponse.next({ request: { headers: requestHeaders } }), csp);
 
   if (isPublic(pathname)) {
     return respond();
@@ -74,15 +78,12 @@ export async function middleware(req: NextRequest) {
   });
   if (!token) {
     if (pathname.startsWith("/api")) {
-      return securityHeaders(
-        NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-        nonce,
-      );
+      return securityHeaders(NextResponse.json({ error: "Unauthorized" }, { status: 401 }), csp);
     }
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("callbackUrl", pathname);
-    return securityHeaders(NextResponse.redirect(url), nonce);
+    return securityHeaders(NextResponse.redirect(url), csp);
   }
 
   return respond();
