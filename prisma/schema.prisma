@@ -1,0 +1,417 @@
+// ─────────────────────────────────────────────────────────────
+// Site-80 "JACOBY" — Prisma schema
+// Scalable PostgreSQL data model for a secure internal database.
+// ─────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ────────────────────────────────────────────────────
+
+enum Role {
+  GUEST
+  PERSONNEL
+  RESEARCHER
+  SECURITY
+  MEDICAL
+  ENGINEERING
+  CONTAINMENT_SPECIALIST
+  DEPARTMENT_DIRECTOR
+  ETHICS_COMMITTEE
+  O5_ADMINISTRATION
+  DEVELOPER
+  WEBSITE_ADMINISTRATOR
+}
+
+enum Clearance {
+  LEVEL_0
+  LEVEL_1
+  LEVEL_2
+  LEVEL_3
+  LEVEL_4
+  LEVEL_5
+}
+
+enum AccountStatus {
+  PENDING // awaiting admin approval / email verification
+  ACTIVE
+  SUSPENDED
+  LOCKED
+  ARCHIVED
+}
+
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+// ── Auth / Users ─────────────────────────────────────────────
+
+model User {
+  id            String        @id @default(cuid())
+  email         String        @unique
+  username      String        @unique
+  name          String?
+  passwordHash  String?
+  role          Role          @default(GUEST)
+  clearance     Clearance     @default(LEVEL_0)
+  status        AccountStatus @default(PENDING)
+  image         String?
+
+  emailVerified DateTime?
+  twoFactorEnabled Boolean    @default(false)
+  twoFactorSecret  String?
+
+  // Brute-force protection
+  failedLoginCount Int        @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+  lastLoginIp      String?
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+
+  accounts      Account[]
+  sessions      Session[]
+  personnel     Personnel?
+  auditLogs     AuditLog[]
+  revisions     Revision[]
+  resetTokens   PasswordResetToken[]
+  favorites     Favorite[]
+
+  @@index([role])
+  @@index([status])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expires   DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ── Personnel ────────────────────────────────────────────────
+
+model Personnel {
+  id            String        @id @default(cuid())
+  userId        String?       @unique
+  portrait      String?
+  name          String
+  rank          String?
+  clearance     Clearance     @default(LEVEL_0)
+  departmentId  String?
+  position      String?
+  supervisorId  String?
+  status        String        @default("Active")
+  biography     String?       @db.Text
+  training      Json?         // string[]
+  awards        Json?         // string[]
+  disciplinary  Json?         // { date, action, notes }[]
+  assignments   Json?         // assignment history entries
+  notes         String?       @db.Text
+  attachments   Json?         // file refs
+  activityLog   Json?
+  tags          String[]      @default([])
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+
+  user          User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  department    Department?   @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  supervisor    Personnel?    @relation("Supervisor", fields: [supervisorId], references: [id], onDelete: SetNull)
+  reports       Personnel[]   @relation("Supervisor")
+
+  @@index([departmentId])
+  @@index([status])
+}
+
+// ── SCP Objects ──────────────────────────────────────────────
+
+model ScpObject {
+  id                  String        @id @default(cuid())
+  slug                String        @unique
+  itemNumber          String        @unique
+  codename            String?
+  objectClass         String?
+  containmentClass    String?
+  riskClass           String?
+  disruptionClass     String?
+  clearanceRequired   Clearance     @default(LEVEL_0)
+  assignedSite        String?
+  assignedDepartment  String?
+  leadResearcher      String?
+  containmentTeam     String?
+  status              ContentStatus @default(DRAFT)
+
+  summary             String?       @db.Text
+  containmentProcedures String?     @db.Text
+  description         String?       @db.Text
+
+  // Structured collections — editable through the admin interface.
+  gallery             Json?         // [{ url, caption }]
+  addendums           Json?         // [{ title, body }]
+  recoveryLogs        Json?
+  experimentLogs      Json?
+  incidentLogs        Json?
+  crossTesting        Json?
+  history             String?       @db.Text
+  attachments         Json?
+  relatedFiles        String[]      @default([])
+  tags                String[]      @default([])
+
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  deletedAt           DateTime?
+
+  revisions           Revision[]
+
+  @@index([objectClass])
+  @@index([status])
+}
+
+// ── Departments ──────────────────────────────────────────────
+
+model Department {
+  id            String        @id @default(cuid())
+  slug          String        @unique
+  name          String
+  shortName     String?
+  icon          String?
+  overview      String?       @db.Text
+  leadership    Json?         // [{ name, role }]
+  responsibilities String?    @db.Text
+  resources     Json?
+  documents     Json?
+  sops          Json?         // standard operating procedures
+  statistics    Json?
+  status        ContentStatus @default(PUBLISHED)
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+
+  members       Personnel[]
+}
+
+// ── Factions / Task Forces / Elite groups ────────────────────
+
+model Faction {
+  id            String        @id @default(cuid())
+  slug          String        @unique
+  name          String
+  type          String        @default("Elite Faction") // Task Force / Elite Faction
+  motto         String?
+  overview      String?       @db.Text
+  requirements  String?       @db.Text
+  equipment     Json?
+  gallery       Json?
+  documents     Json?
+  status        ContentStatus @default(PUBLISHED)
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+}
+
+// ── Generic content pages (Rules, Docs, Research, etc.) ──────
+
+model ContentPage {
+  id            String        @id @default(cuid())
+  slug          String        @unique
+  category      String        // e.g. "rules", "documents", "research", "training"
+  title         String
+  icon          String?
+  excerpt       String?
+  body          String        @db.Text
+  order         Int           @default(0)
+  clearanceRequired Clearance @default(LEVEL_0)
+  status        ContentStatus @default(PUBLISHED)
+  tags          String[]      @default([])
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+
+  revisions     Revision[]
+
+  @@index([category])
+  @@index([status])
+}
+
+// ── Incidents / Operations ───────────────────────────────────
+
+model Incident {
+  id            String        @id @default(cuid())
+  slug          String        @unique
+  refNumber     String        @unique
+  title         String
+  severity      String        @default("Minor")
+  location      String?
+  date          DateTime?
+  summary       String?       @db.Text
+  body          String?       @db.Text
+  status        ContentStatus @default(DRAFT)
+  tags          String[]      @default([])
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+}
+
+model Operation {
+  id            String        @id @default(cuid())
+  slug          String        @unique
+  codename      String
+  classification String       @default("Routine")
+  status        String        @default("Planned")
+  scheduledFor  DateTime?
+  objective     String?       @db.Text
+  body          String?       @db.Text
+  contentStatus ContentStatus @default(DRAFT)
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+}
+
+// ── Announcements ────────────────────────────────────────────
+
+model Announcement {
+  id            String        @id @default(cuid())
+  title         String
+  body          String        @db.Text
+  level         String        @default("info") // info | caution | alert
+  pinned        Boolean       @default(false)
+  authorName    String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+}
+
+// ── Revision history (generic) ───────────────────────────────
+
+model Revision {
+  id            String        @id @default(cuid())
+  entityType    String        // "ScpObject" | "ContentPage" | ...
+  entityId      String
+  snapshot      Json
+  summary       String?
+  authorId      String?
+
+  createdAt     DateTime      @default(now())
+
+  author        User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  scpObject     ScpObject?    @relation(fields: [scpObjectId], references: [id], onDelete: Cascade)
+  scpObjectId   String?
+  contentPage   ContentPage?  @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
+  contentPageId String?
+
+  @@index([entityType, entityId])
+}
+
+// ── Favorites / Pinned ───────────────────────────────────────
+
+model Favorite {
+  id         String   @id @default(cuid())
+  userId     String
+  entityType String
+  entityId   String
+  label      String
+  href       String
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, entityType, entityId])
+}
+
+// ── Audit log ────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  actorLabel String?
+  action     String
+  target     String?
+  meta       Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ── Media library ────────────────────────────────────────────
+
+model Media {
+  id         String   @id @default(cuid())
+  filename   String
+  url        String
+  mimeType   String
+  size       Int
+  width      Int?
+  height     Int?
+  alt        String?
+  folder     String   @default("general")
+  uploadedBy String?
+  createdAt  DateTime @default(now())
+  deletedAt  DateTime?
+}
+
+// ── Site settings / navigation / theme (key-value) ───────────
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
